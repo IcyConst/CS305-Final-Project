@@ -13,6 +13,7 @@ import pickle
 """
 This is CS305 project skeleton code.
 Please refer to the example files - example/dumpreceiver.py and example/dumpsender.py - to learn how to play with this skeleton.
+OK. We will do that -- just for git test.
 """
 
 BUF_SIZE = 1400
