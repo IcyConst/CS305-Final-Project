@@ -16,6 +16,9 @@ This is CS305 project skeleton code.
 Please refer to the example files - example/dumpreceiver.py and example/dumpsender.py - to learn how to play with this skeleton.
 OK. We will do that -- just for git test.
 This is for the ssh test -- to check if it updates automatically.
+ 
+HYH's test for push
+
 """
 
 BUF_SIZE = 1400
