@@ -1,5 +1,6 @@
 import sys
 import os
+
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 import select
 import util.simsocket as simsocket
@@ -14,12 +15,14 @@ import pickle
 This is CS305 project skeleton code.
 Please refer to the example files - example/dumpreceiver.py and example/dumpsender.py - to learn how to play with this skeleton.
 OK. We will do that -- just for git test.
+This is for the ssh test -- to check if it updates automatically.
 """
 
 BUF_SIZE = 1400
 HEADER_LEN = struct.calcsize("HBBHHII")
 
-def process_download(sock,chunkfile, outputfile):
+
+def process_download(sock, chunkfile, outputfile):
     '''
     if DOWNLOAD is used, the peer will keep getting files until it is done
     '''
@@ -29,16 +32,18 @@ def process_download(sock,chunkfile, outputfile):
 def process_inbound_udp(sock):
     # Receive pkt
     pkt, from_addr = sock.recvfrom(BUF_SIZE)
-    Magic, Team, Type,hlen, plen, Seq, Ack= struct.unpack("HBBHHII", pkt[:HEADER_LEN])
+    Magic, Team, Type, hlen, plen, Seq, Ack = struct.unpack("HBBHHII", pkt[:HEADER_LEN])
     data = pkt[HEADER_LEN:]
     print("SKELETON CODE CALLED, FILL this!")
+
 
 def process_user_input(sock):
     command, chunkf, outf = input().split(' ')
     if command == 'DOWNLOAD':
-        process_download(sock ,chunkf, outf)
+        process_download(sock, chunkf, outf)
     else:
         pass
+
 
 def peer_run(config):
     addr = (config.ip, config.port)
@@ -46,7 +51,7 @@ def peer_run(config):
 
     try:
         while True:
-            ready = select.select([sock, sys.stdin],[],[], 0.1)
+            ready = select.select([sock, sys.stdin], [], [], 0.1)
             read_ready = ready[0]
             if len(read_ready) > 0:
                 if sock in read_ready:
