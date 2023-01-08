@@ -19,6 +19,7 @@ You are advised to focus the following things:
 2. How to send/receive pkt with simsocket?
 3. How to interpret bytes and how to adapt bytes to/from network endian?
 4. How to use hashlib?
+6
 """
 
 BUF_SIZE = 1400
