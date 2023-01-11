@@ -2,6 +2,8 @@ import math
 import sys
 import os
 
+import matplotlib.pyplot as plt
+
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 import select
 import util.simsocket as simsocket
@@ -60,6 +62,8 @@ dupACKcount = dict()
 byte_to_receive = dict()
 byte_has_received = dict()
 buffer = dict()
+cwnd_list = dict()
+iteration = []
 
 
 def get_dict_key(dic, value):
@@ -139,7 +143,7 @@ def process_inbound_udp(sock):
     global byte_has_received
     global buffer
 
-    global send_recv
+    global cwnd_list
     # Receive pkt
     pkt, from_addr = sock.recvfrom(BUF_SIZE)
     Magic, Team, Type, hlen, plen, Seq, Ack = struct.unpack("HBBHHII", pkt[:HEADER_LEN])
@@ -227,6 +231,7 @@ def process_inbound_udp(sock):
         ssthresh[from_addr] = 64
         state[from_addr] = 0
         conges_ct[from_addr] = 0
+        cwnd_list[from_addr] = []
 
 
     elif Type == 3:
@@ -307,6 +312,19 @@ def process_inbound_udp(sock):
             del cwnd[from_addr]
             del ssthresh[from_addr]
             del conges_ct[from_addr]
+
+            it_num = len(cwnd_list[from_addr])
+            x = list(range(1, it_num + 1))
+            y = cwnd_list[from_addr]
+            print(x)
+            print(y)
+            plt.plot(x, y)
+            plt.title('Line Plot')
+            plt.xlabel('time')
+            plt.ylabel('window size')
+
+            plt.savefig('line_plot.png')
+
             # finished
             print(f"finished sending {ex_sending_chunkhash}")
         else:
@@ -381,6 +399,7 @@ def process_inbound_udp(sock):
                     sock.sendto(data_header + next_data, from_addr)
                     send_time_dict[from_addr][retransmission_index] = time.time()
 
+            cwnd_list[from_addr].append(cwnd[from_addr])
             print(last_byte_acked[from_addr])
 
             num_to_send = max(0, last_byte_acked[from_addr] + cwnd[from_addr] - last_byte_sent[from_addr])
@@ -401,6 +420,7 @@ def process_inbound_udp(sock):
                         sock.sendto(data_header + next_data, from_addr)
                         send_time_dict[from_addr][new_seq_num] = time.time()
                     else:
+
                         break
 
     elif Type == 5:
