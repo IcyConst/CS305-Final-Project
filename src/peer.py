@@ -1,3 +1,4 @@
+import math
 import sys
 import os
 
@@ -39,6 +40,27 @@ ex_downloading_chunkhash = []
 # Consider that there are more than one chunkhashes to download, so we need a list.
 get_chunk_dict = dict()
 
+send_time_dict = dict()
+
+cwnd = dict()
+ssthresh = dict()
+conges_ct = dict()
+state = dict()
+# 0 stands for slow start
+# 1 stands for congestion avoidance
+# 2 stands for fast recovery
+last_byte_sent = dict()
+last_byte_acked = dict()
+timeout = dict()
+Estimated_RTT = dict()
+Dev_RTT = dict()
+alpha = dict()
+beta = dict()
+dupACKcount = dict()
+byte_to_receive = dict()
+byte_has_received = dict()
+buffer = dict()
+
 
 def get_dict_key(dic, value):
     key = list(dic.keys())[list(dic.values()).index(value)]
@@ -59,7 +81,7 @@ def process_download(sock, chunkfile, outputfile):
     with open(chunkfile, 'r') as cf:
         for line in cf.readlines():
             index, datahash_str = line.strip().split(" ")
-            print(index, datahash_str)
+            # print(index, datahash_str)
             # The index is the num(not used now), the datahash_str is the chunkhash that need to be downloaded.
             ex_received_chunk[datahash_str] = bytes()  # Record in the dict.
             ex_downloading_chunkhash.append(datahash_str)  # Record in the list.
@@ -97,7 +119,27 @@ def process_inbound_udp(sock):
     global HAS_SENT
     global HAS_RECEIVED
     global get_chunk_dict
+    # 存放每个包的发送时间
+    global send_time_dict
 
+    global cwnd
+    global ssthresh
+    global conges_ct
+    global state
+    global last_byte_sent
+    global last_byte_acked
+    global timeout
+    global Estimated_RTT
+    global Dev_RTT
+    global dupACKcount
+    global alpha
+    global beta
+
+    global byte_to_receive
+    global byte_has_received
+    global buffer
+
+    global send_recv
     # Receive pkt
     pkt, from_addr = sock.recvfrom(BUF_SIZE)
     Magic, Team, Type, hlen, plen, Seq, Ack = struct.unpack("HBBHHII", pkt[:HEADER_LEN])
@@ -129,7 +171,10 @@ def process_inbound_udp(sock):
                 ex_sending_chunkhash = chunkhash_str  # When send back IHAVE pkt, then change ex_sending.
                 sock.sendto(ihave_pkt, from_addr)
 
+
+
     elif Type == 1:
+        # 接受方
         # received an IHAVE pkt
         # see what chunk the sender has
         get_chunk_hash = data[:20]
@@ -147,50 +192,97 @@ def process_inbound_udp(sock):
                                          socket.htonl(0))
                 get_pkt = get_header + cur_get_hash
                 sock.sendto(get_pkt, get_chunk_dict[cur_get_hash])  # The values in the dict save the from_addr.
+                buffer[get_chunk_dict[cur_get_hash]] = {-1: -1}
+
+        byte_to_receive[from_addr] = 1
+        byte_has_received[from_addr] = []
 
     elif Type == 2:
+        # 发送方
         # received a GET pkt
+        # 这里就应该直接按照窗口来发 但现在先不改
         chunk_data = config.haschunks[ex_sending_chunkhash][:MAX_PAYLOAD]
         # chunk_data = config.haschunks[data[:20]][:MAX_PAYLOAD]  # Use the information that from the pkt.
 
         # send back DATA pkt
+
         HAS_SENT = HAS_SENT + 1  # Update the HAS_SENT value when sending the DATA pkt.
 
         data_header = struct.pack("HBBHHII", socket.htons(52305), TEAM_NUM, 3, socket.htons(HEADER_LEN),
-                                  socket.htons(HEADER_LEN), socket.htonl(1), socket.htonl(0))
+                                  socket.htons(HEADER_LEN + len(chunk_data)), socket.htonl(1), socket.htonl(0))
         # data_header = struct.pack("HBBHHII", socket.htons(52305), 58, 3, socket.htons(HEADER_LEN),
         #                           socket.htons(HEADER_LEN + len(chunk_data)), socket.htonl(1), socket.htonl(0))
         sock.sendto(data_header + chunk_data, from_addr)
+        send_time_dict[from_addr] = {1: time.time()}
+
+        last_byte_sent[from_addr] = 1
+        last_byte_acked[from_addr] = 0
+        timeout[from_addr] = 5
+        Estimated_RTT[from_addr] = 4
+        Dev_RTT[from_addr] = 0.25
+        alpha[from_addr] = 0.125
+        beta[from_addr] = 0.25
+        dupACKcount[from_addr] = 0
+        cwnd[from_addr] = 1
+        ssthresh[from_addr] = 64
+        state[from_addr] = 0
+        conges_ct[from_addr] = 0
+
 
     elif Type == 3:
-        # received a DATA pkt
-        # print(get_chunk_dict)
+        # receiver
         current_chunkhash = bytes.hex(get_dict_key(get_chunk_dict, from_addr))
-        print(current_chunkhash)
-        ex_received_chunk[current_chunkhash] += data
-        print(len(ex_received_chunk[current_chunkhash]))
-        # find the corresponding chunkhash, then add.
+        seq_num = socket.ntohl(Seq)
+        to_ack_num = byte_to_receive[from_addr] - 1
 
+        # buffer[from_addr][seq_num] = data
+        # print(buffer)
+
+        if seq_num == byte_to_receive[from_addr]:
+            ex_received_chunk[current_chunkhash] += data
+            byte_to_receive[from_addr] += 1
+            to_ack_num = byte_to_receive[from_addr] - 1
+            if len(byte_has_received[from_addr]) != 0:
+                for record in byte_has_received[from_addr]:
+                    if byte_to_receive[from_addr] == record:
+                        byte_has_received[from_addr].remove(record)
+                        buffer_now = buffer[from_addr]
+                        data_buffer = buffer_now[record]
+                        ex_received_chunk[current_chunkhash] += data_buffer
+                        print("buffer")
+                        buffer_now[record] = bytes()
+                        # data_buffer.pop(record)
+                        byte_to_receive[from_addr] += 1
+                        to_ack_num = byte_to_receive[from_addr] - 1
+                    else:
+                        break
+        elif seq_num > byte_to_receive[from_addr]:
+            to_ack_num = byte_to_receive[from_addr] - 1
+
+            buffer[from_addr][seq_num] = data
+            byte_has_received[from_addr].append(seq_num)
+
+        # find the corresponding chunkhash, then add.
+        # print("byte2re ")
+        print(byte_to_receive[from_addr])
         # send back ACK
         ack_pkt = struct.pack("HBBHHII", socket.htons(52305), TEAM_NUM, 4, socket.htons(HEADER_LEN),
-                              socket.htons(HEADER_LEN), socket.htonl(0), Seq)
+                              socket.htons(HEADER_LEN), socket.htonl(0), socket.htonl(to_ack_num))
         sock.sendto(ack_pkt, from_addr)
-        cur_time = time.time()
-        print(cur_time - START_TIME)
+
         # see if finished
         if len(ex_received_chunk[current_chunkhash]) == CHUNK_DATA_SIZE:
+            del byte_to_receive[from_addr]
+            del byte_has_received[from_addr]
             HAS_RECEIVED = HAS_RECEIVED + 1
             # finished downloading this chunkdata!
             # add to this peer's has-chunk:
             config.haschunks[current_chunkhash] = ex_received_chunk[current_chunkhash]
-
-        print(HAS_RECEIVED)
-        # print(ex_downloading_chunkhash)
         if HAS_RECEIVED == len(ex_downloading_chunkhash):
             # When all the chunkhash have been downloaded
             # dump your received chunk to file in dict form using pickle
             cur_time = time.time()
-            print(cur_time - START_TIME)
+            # print(cur_time - START_TIME)
             with open(ex_output_file, "wb") as wf:
                 pickle.dump(ex_received_chunk, wf)
             # you need to print "GOT" when finished downloading all chunks in a DOWNLOAD file
@@ -201,20 +293,115 @@ def process_inbound_udp(sock):
         # Note that in Type 4, because there is only one file now, so we just use ex_sending_chunkhash is OK.
 
         ack_num = socket.ntohl(Ack)
-        # print(ack_num)
         if ack_num * MAX_PAYLOAD >= CHUNK_DATA_SIZE:
+            del send_time_dict[from_addr]
+
+            del last_byte_sent[from_addr]
+            del last_byte_acked[from_addr]
+            del timeout[from_addr]
+            del Estimated_RTT[from_addr]
+            del Dev_RTT[from_addr]
+            del alpha[from_addr]
+            del beta[from_addr]
+            del dupACKcount[from_addr]
+            del cwnd[from_addr]
+            del ssthresh[from_addr]
+            del conges_ct[from_addr]
             # finished
             print(f"finished sending {ex_sending_chunkhash}")
-            pass
         else:
-            left = ack_num * MAX_PAYLOAD
-            right = min((ack_num + 1) * MAX_PAYLOAD, CHUNK_DATA_SIZE)
-            next_data = config.haschunks[ex_sending_chunkhash][left: right]
-            # send next data
-            data_header = struct.pack("HBBHHII", socket.htons(52305), TEAM_NUM, 3, socket.htons(HEADER_LEN),
-                                      socket.htons(HEADER_LEN + len(next_data)), socket.htonl(ack_num + 1),
-                                      socket.htonl(0))
-            sock.sendto(data_header + next_data, from_addr)
+            # 这个包当时发过去时的seq
+            seq_num = ack_num
+            # if last_byte_acked[from_addr] + 1 <= seq_num <= last_byte_sent[from_addr]:
+            if last_byte_acked[from_addr] + 1 <= seq_num <= last_byte_sent[from_addr]:
+                send_time = send_time_dict[from_addr][seq_num]
+                del send_time_dict[from_addr][seq_num]
+                SampleRTT = time.time() - send_time
+                Estimated_RTT[from_addr] = (1 - alpha[from_addr]) * Estimated_RTT[from_addr] + alpha[
+                    from_addr] * SampleRTT
+                Dev_RTT[from_addr] = (1 - beta[from_addr]) * Dev_RTT[from_addr] + beta[from_addr] * abs(
+                    SampleRTT - Estimated_RTT[from_addr])
+                timeout[from_addr] = Estimated_RTT[from_addr] + 4 * Dev_RTT[from_addr]
+                # timeout[from_addr] = 1
+
+                last_byte_acked[from_addr] = seq_num
+
+                if state[from_addr] == 0:
+                    dupACKcount[from_addr] = 0
+                    cwnd[from_addr] += 1
+                    if cwnd[from_addr] >= ssthresh[from_addr]:
+                        state[from_addr] = 1
+                elif state[from_addr] == 1:
+                    dupACKcount[from_addr] = 0
+                    conges_ct[from_addr] += 1
+                    if conges_ct[from_addr] == cwnd[from_addr]:
+                        conges_ct[from_addr] = 0
+                        cwnd[from_addr] += 1
+            # elif seq_num > last_byte_sent[from_addr]:
+            #     last_byte_acked[from_addr] = seq_num
+            #
+            #     if state[from_addr] == 0:
+            #         dupACKcount[from_addr] = 0
+            #         cwnd[from_addr] += 1
+            #         if cwnd[from_addr] >= ssthresh[from_addr]:
+            #             state[from_addr] = 1
+            #     elif state[from_addr] == 1:
+            #         dupACKcount[from_addr] = 0
+            #         conges_ct[from_addr] += 1
+            #         if conges_ct[from_addr] == cwnd[from_addr]:
+            #             conges_ct[from_addr] = 0
+            #             cwnd[from_addr] += 1
+            elif seq_num == last_byte_acked[from_addr]:
+
+                # 重复ack了
+                dupACKcount[from_addr] += 1
+                # 三次重传
+                if dupACKcount[from_addr] == 3:
+                    print("retransmission!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+                    dupACKcount[from_addr] = 0
+
+                    # print("re index")
+                    if state[from_addr] == 1:
+                        state[from_addr] = 0
+                        conges_ct[from_addr] = 0
+
+                    ssthresh[from_addr] = max(math.floor(cwnd[from_addr] / 2), 2)
+                    cwnd[from_addr] = 1
+
+                    retransmission_index = last_byte_acked[from_addr] + 1
+                    # print(retransmission_index)
+                    left = (retransmission_index - 1) * MAX_PAYLOAD
+                    right = min((retransmission_index) * MAX_PAYLOAD, CHUNK_DATA_SIZE)
+                    next_data = config.haschunks[ex_sending_chunkhash][left: right]
+                    # send next data
+                    data_header = struct.pack("HBBHHII", socket.htons(52305), TEAM_NUM, 3, socket.htons(HEADER_LEN),
+                                              socket.htons(HEADER_LEN + len(next_data)),
+                                              socket.htonl(retransmission_index),
+                                              socket.htonl(0))
+                    sock.sendto(data_header + next_data, from_addr)
+                    send_time_dict[from_addr][retransmission_index] = time.time()
+
+            print(last_byte_acked[from_addr])
+
+            num_to_send = max(0, last_byte_acked[from_addr] + cwnd[from_addr] - last_byte_sent[from_addr])
+            new_seq_num = last_byte_sent[from_addr]
+            last_byte_sent[from_addr] = max(last_byte_acked[from_addr] + cwnd[from_addr], last_byte_sent[from_addr])
+
+            if num_to_send > 0:
+                for _ in range(num_to_send):
+                    new_seq_num += 1
+                    if new_seq_num * MAX_PAYLOAD <= CHUNK_DATA_SIZE:
+                        left = (new_seq_num - 1) * MAX_PAYLOAD
+                        right = min((new_seq_num) * MAX_PAYLOAD, CHUNK_DATA_SIZE)
+                        next_data = config.haschunks[ex_sending_chunkhash][left: right]
+                        # send next data
+                        data_header = struct.pack("HBBHHII", socket.htons(52305), TEAM_NUM, 3, socket.htons(HEADER_LEN),
+                                                  socket.htons(HEADER_LEN + len(next_data)), socket.htonl(new_seq_num),
+                                                  socket.htonl(0))
+                        sock.sendto(data_header + next_data, from_addr)
+                        send_time_dict[from_addr][new_seq_num] = time.time()
+                    else:
+                        break
 
     elif Type == 5:
         # received a DENIED pkt
@@ -242,13 +429,37 @@ def peer_run(config):
             ready = select.select([sock, sys.stdin], [], [], 0.1)
             # The ready part keeps listening to both sock and sys.stdin, then deal with the pkt/input.
             read_ready = ready[0]
+            # print(send_time_dict)
+            # 超时检查
+            for addr, value in send_time_dict.items():
+                for seq, time_bf in value.items():
+                    if time.time() - time_bf > timeout[addr]:
+                        print("timeout!")
+                        if state[addr] == 1:
+                            state[addr] = 0
+                            conges_ct[addr] = 0
+
+                        ssthresh[addr] = max(math.floor(cwnd[addr] / 2), 2)
+                        cwnd[addr] = 1
+
+                        left = (seq - 1) * MAX_PAYLOAD
+                        right = min((seq) * MAX_PAYLOAD, CHUNK_DATA_SIZE)
+                        next_data = config.haschunks[ex_sending_chunkhash][left: right]
+                        data_header = struct.pack("HBBHHII", socket.htons(52305), TEAM_NUM, 3, socket.htons(HEADER_LEN),
+                                                  socket.htons(HEADER_LEN + len(next_data)),
+                                                  socket.htonl(seq),
+                                                  socket.htonl(0))
+                        sock.sendto(data_header + next_data, addr)
+                        send_time_dict[addr][seq] = time.time()
+
             if len(read_ready) > 0:
                 if sock in read_ready:
                     process_inbound_udp(sock)
                 if sys.stdin in read_ready:
                     process_user_input(sock)
+
             else:
-                # No pkt nor input arrives during this period 
+                # No pkt nor input arrives during this period
                 pass
     except KeyboardInterrupt:
         pass
