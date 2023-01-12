@@ -66,7 +66,7 @@ And you can visualize your network using net-visual.py
 @pytest.fixture(scope='module')
 def advance_session():
     success = False
-    time_max = 640
+    time_max = 300
     if os.path.exists("test/tmp5/results"):
         shutil.rmtree("test/tmp5/results", ignore_errors=True)
         os.mkdir("test/tmp5/results")

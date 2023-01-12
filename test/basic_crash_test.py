@@ -34,7 +34,7 @@ python3 src/peer.py -p test/tmp4/nodes4.map -c test/tmp4/data4-2.fragment -m 100
 @pytest.fixture(scope='module')
 def crash_session():
     success = False
-    time_max = 80
+    time_max = 40
     if os.path.exists("test/tmp4/download_result.fragment"):
         os.remove("test/tmp4/download_result.fragment")
 
@@ -47,9 +47,9 @@ def crash_session():
 
     crash_session.peer_list[("127.0.0.1", 48001)].send_cmd('''DOWNLOAD test/tmp4/download_target4.chunkhash test/tmp4/download_result.fragment\n''')
 
-    time.sleep(1)
+    time.sleep(0.01)
     # crash peer2
-    crash_session.peer_list[("127.0.0.1", 48002)].terminate_peer()
+    crash_session.peer_list[("127.0.0.1", 48003)].terminate_peer()
 
     while True:
         if os.path.exists("test/tmp4/download_result.fragment"):

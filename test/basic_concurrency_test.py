@@ -23,21 +23,21 @@ This testing script is equivalent to run the following commands in different she
 
 perl util/hupsim.pl -m test/tmp3/topo3.map -n test/tmp3/nodes3.map -p {port_number} -v 3
 
-
-python3 src/peer.py -p test/tmp3/nodes3.map -c test/tmp3/data3-1.fragment -m 100 -i 1 -t 60
+export SIMULATOR="127.0.0.1: 52305"
+python3 src/peer.py -p test/tmp3/nodes3.map -c test/tmp3/data3-1.fragment -m 100 -i 1 -v 3 -t 60
 DOWNLOAD test/tmp3/download_target3.chunkhash test/tmp3/download_result.fragment
 
 
-python3 src/peer.py -p test/tmp3/nodes3.map -c test/tmp3/data3-2.fragment -m 100 -i 2 -t 60
+python3 src/peer.py -p test/tmp3/nodes3.map -c test/tmp3/data3-2.fragment -m 100 -i 2 -v 3 -t 60
 
 
-python3 src/peer.py -p test/tmp3/nodes3.map -c test/tmp3/data3-3.fragment -m 100 -i 3 -t 60
+python3 src/peer.py -p test/tmp3/nodes3.map -c test/tmp3/data3-3.fragment -m 100 -i 3 -v 3 -t 60
 '''
 
 @pytest.fixture(scope='module')
 def concurrent_session():
     success = False
-    time_max = 120
+    time_max = 20
     if os.path.exists("test/tmp3/download_result.fragment"):
         os.remove("test/tmp3/download_result.fragment")
 
