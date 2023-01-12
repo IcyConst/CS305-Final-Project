@@ -244,7 +244,7 @@ def process_inbound_udp(sock):
 
             # buffer[from_addr][seq_num] = data
             # print(buffer)
-
+            to_seq_num = 0
             if seq_num == byte_to_receive[from_addr]:
                 ex_received_chunk[current_chunkhash] += data
                 byte_to_receive[from_addr] += 1
@@ -284,10 +284,13 @@ def process_inbound_udp(sock):
                 #     else:
                 #         break
             elif seq_num > byte_to_receive[from_addr]:
+                to_seq_num = seq_num
                 to_ack_num = byte_to_receive[from_addr] - 1
 
                 buffer[from_addr][seq_num] = data
                 byte_has_received[from_addr].append(seq_num)
+            elif seq_num < byte_to_receive[from_addr]:
+                return
 
             # find the corresponding chunkhash, then add.
             # print("byte2re ")
@@ -295,26 +298,28 @@ def process_inbound_udp(sock):
             print(f'the buffer in receiver stores {byte_has_received[from_addr]} pkts')
             # send back ACK
             ack_pkt = struct.pack("HBBHHII", socket.htons(52305), TEAM_NUM, 4, socket.htons(HEADER_LEN),
-                                  socket.htons(HEADER_LEN), socket.htonl(0), socket.htonl(to_ack_num))
+                                  socket.htons(HEADER_LEN), socket.htonl(to_seq_num), socket.htonl(to_ack_num))
             sock.sendto(ack_pkt, from_addr)
             print('')
 
         if len(ex_received_chunk[current_chunkhash]) == CHUNK_DATA_SIZE:
             # print(f'{len(ex_received_chunk[current_chunkhash])} vs {CHUNK_DATA_SIZE}')
-            del byte_to_receive[from_addr]
-            del byte_has_received[from_addr]
-            HAS_RECEIVED = HAS_RECEIVED + 1
-            # finished downloading this chunkdata!
-            # add to this peer's has-chunk:
-            config.haschunks[current_chunkhash] = ex_received_chunk[current_chunkhash]
-        print(f'{len(ex_received_chunk[current_chunkhash])} vs {CHUNK_DATA_SIZE}')
-        if HAS_RECEIVED == len(ex_downloading_chunkhash):
-            # When all the chunkhash have been downloaded
-            # dump your received chunk to file in dict form using pickle
-            with open(ex_output_file, "wb") as wf:
-                pickle.dump(ex_received_chunk, wf)
-            # you need to print "GOT" when finished downloading all chunks in a DOWNLOAD file
-            print(f"GOT {ex_output_file}")
+            if from_addr in byte_to_receive:
+                print("finish receiving the chunk")
+                del byte_to_receive[from_addr]
+                del byte_has_received[from_addr]
+                HAS_RECEIVED = HAS_RECEIVED + 1
+                # finished downloading this chunkdata!
+                # add to this peer's has-chunk:
+                config.haschunks[current_chunkhash] = ex_received_chunk[current_chunkhash]
+
+                if HAS_RECEIVED == len(ex_downloading_chunkhash):
+                    # When all the chunkhash have been downloaded
+                    # dump your received chunk to file in dict form using pickle
+                    with open(ex_output_file, "wb") as wf:
+                        pickle.dump(ex_received_chunk, wf)
+                    # you need to print "GOT" when finished downloading all chunks in a DOWNLOAD file
+                    print(f"GOT {ex_output_file}")
 
     elif Type == 4:
         print(f'the state of the sender is {state[from_addr]}')
@@ -323,7 +328,10 @@ def process_inbound_udp(sock):
         # Note that in Type 4, because there is only one file now, so we just use ex_sending_chunkhash is OK.
         cwnd_list[from_addr].append(cwnd[from_addr])
         ack_num = socket.ntohl(Ack)
+        if_dup_seq_num = socket.ntohl(Seq)
         if ack_num * MAX_PAYLOAD >= CHUNK_DATA_SIZE:
+            print(send_time_dict[from_addr])
+
             del send_time_dict[from_addr]
 
             del last_byte_sent[from_addr]
@@ -345,6 +353,7 @@ def process_inbound_udp(sock):
             y = cwnd_list[from_addr]
             print(x)
             print(y)
+
             plt.plot(x, y)
             plt.title('Line Plot')
             plt.xlabel('time')
@@ -357,14 +366,47 @@ def process_inbound_udp(sock):
             seq_num = ack_num
             # if last_byte_acked[from_addr] + 1 <= seq_num <= last_byte_sent[from_addr]:
             if last_byte_acked[from_addr] + 1 <= seq_num <= last_byte_sent[from_addr]:
-                send_time = send_time_dict[from_addr][seq_num]
-                del send_time_dict[from_addr][seq_num]
-                SampleRTT = time.time() - send_time
-                Estimated_RTT[from_addr] = (1 - alpha) * Estimated_RTT[from_addr] + alpha * SampleRTT
-                Dev_RTT[from_addr] = (1 - beta) * Dev_RTT[from_addr] + beta * abs(
-                    SampleRTT - Estimated_RTT[from_addr])
-                timeout[from_addr] = Estimated_RTT[from_addr] + 4 * Dev_RTT[from_addr]
-                # timeout[from_addr] = 1
+                # update timeout refreshing
+
+                # send_time = send_time_dict[from_addr][seq_num]
+                # del send_time_dict[from_addr][seq_num]
+
+                acked_num = seq_num - last_byte_acked[from_addr]
+
+                # 本次ack正常更新
+                if seq_num in send_time_dict[from_addr]:
+                    print(f'timeout is previously {timeout[from_addr]}')
+                    send_time = send_time_dict[from_addr][seq_num]
+                    del send_time_dict[from_addr][seq_num]
+                    SampleRTT = time.time() - send_time
+                    Estimated_RTT[from_addr] = (1 - alpha) * Estimated_RTT[from_addr] + alpha * SampleRTT
+                    Dev_RTT[from_addr] = (1 - beta) * Dev_RTT[from_addr] + beta * abs(
+                        SampleRTT - Estimated_RTT[from_addr])
+                    timeout[from_addr] = Estimated_RTT[from_addr] + 4 * Dev_RTT[from_addr]
+                    # timeout[from_addr] = 1
+                    print(f'received new ack, sampleRTT is {SampleRTT}')
+                    print(f'timeout is updated to {timeout[from_addr]}')
+
+
+                # 收到逐一增加的ack
+                if acked_num == 1:
+                    pass
+                # 返回的ack表示接受方使用了缓存
+                else:
+                    min_num_in_dict = min(send_time_dict[from_addr])
+                    send_time_problem = send_time_dict[from_addr][min_num_in_dict]
+                    del send_time_dict[from_addr][min_num_in_dict]
+
+                    SampleRTT = time.time() - send_time_problem
+                    Estimated_RTT[from_addr] = (1 - alpha) * Estimated_RTT[from_addr] + alpha * SampleRTT
+                    Dev_RTT[from_addr] = (1 - beta) * Dev_RTT[from_addr] + beta * abs(
+                        SampleRTT - Estimated_RTT[from_addr])
+                    timeout[from_addr] = Estimated_RTT[from_addr] + 4 * Dev_RTT[from_addr]
+                    print(f'buffered ack arrived, time is {SampleRTT}, timeout is updated to {timeout[from_addr]}')
+
+                    # to_del = acked_num - 1
+                    # for ct in range(to_del):
+                    #     del send_time_dict[from_addr][ct + min_num_in_dict]
 
                 last_byte_acked[from_addr] = seq_num
 
@@ -386,11 +428,25 @@ def process_inbound_udp(sock):
 
 
             elif seq_num == last_byte_acked[from_addr]:
+                # if_dup_ack_num
+                print(f'dup time update timeout is previously {timeout[from_addr]}')
+                send_time = send_time_dict[from_addr][if_dup_seq_num]
+                del send_time_dict[from_addr][if_dup_seq_num]
+                SampleRTT = time.time() - send_time
+                Estimated_RTT[from_addr] = (1 - alpha) * Estimated_RTT[from_addr] + alpha * SampleRTT
+                Dev_RTT[from_addr] = (1 - beta) * Dev_RTT[from_addr] + beta * abs(
+                    SampleRTT - Estimated_RTT[from_addr])
+                timeout[from_addr] = Estimated_RTT[from_addr] + 4 * Dev_RTT[from_addr]
+                # timeout[from_addr] = 1
+                print(f'received new ack, sampleRTT is {SampleRTT}')
+                print(f'timeout is updated to {timeout[from_addr]}')
+
 
                 # duplicated ACK
                 if state[from_addr] == 0 or state[from_addr] == 1:
                     dupACKcount[from_addr] += 1
                 elif state[from_addr] == 2:
+                    print("DuplicatedACK in fast recovery")
                     cwnd[from_addr] = cwnd[from_addr] + 1
                 # 三次重传
                 if state[from_addr] != 2:
@@ -421,13 +477,16 @@ def process_inbound_udp(sock):
                                                   socket.htonl(retransmission_index),
                                                   socket.htonl(0))
                         sock.sendto(data_header + next_data, from_addr)
-                        # send_time_dict[from_addr][retransmission_index] = time.time()
+                        send_time_dict[from_addr][retransmission_index] = time.time()
                         print(f'The sender sends pkt{retransmission_index} in retransmission')
 
             print(f'The sender has already received {last_byte_acked[from_addr]} packages')
             print(f'the sender received ack {seq_num}')
+            print(f'the sender received real_ack(buffered){if_dup_seq_num}')
             print(f'the window size now is {cwnd[from_addr]}')
             print(f'the ssthresh is {ssthresh[from_addr]}')
+            print(f'the EstimatedRTT is {Estimated_RTT[from_addr]}')
+            print(f'the DevRTT is {Dev_RTT[from_addr]}')
             print(f'the timeout is set to{timeout[from_addr]}')
 
             num_to_send = max(0, last_byte_acked[from_addr] + cwnd[from_addr] - last_byte_sent[from_addr])
@@ -479,15 +538,33 @@ def peer_run(config):
             # The ready part keeps listening to both sock and sys.stdin, then deal with the pkt/input.
             read_ready = ready[0]
             # print(send_time_dict)
+
+            if len(read_ready) > 0:
+                if sock in read_ready:
+                    process_inbound_udp(sock)
+                if sys.stdin in read_ready:
+                    process_user_input(sock)
+
+            else:
+                # No pkt nor input arrives during this period
+                pass
+
             # 超时检查
             for addr, value in send_time_dict.items():
                 for seq, time_bf in value.items():
                     if time.time() - time_bf > timeout[addr]:
-                        print("timeout!")
-                        SampleRTT = time.time() - time_bf
-                        Estimated_RTT[addr] = (1 - alpha) * Estimated_RTT[addr] + alpha * SampleRTT
-                        Dev_RTT[addr] = (1 - beta) * Dev_RTT[addr] + beta * abs(SampleRTT - Estimated_RTT[addr])
-                        timeout[addr] = Estimated_RTT[addr] + 4 * Dev_RTT[addr]
+                        print("timeout!!!!!!!")
+                        print(f'the timeout pkt is {seq}')
+                        print(f'the actual time is {time.time() - time_bf}')
+                        print(f'the timeout now is {timeout[addr]}')
+                        # SampleRTT = time.time() - time_bf
+                        # Estimated_RTT[addr] = (1 - alpha) * Estimated_RTT[addr] + alpha * SampleRTT
+                        # Dev_RTT[addr] = (1 - beta) * Dev_RTT[addr] + beta * abs(SampleRTT - Estimated_RTT[addr])
+                        # timeout[addr] = Estimated_RTT[addr] + 4 * Dev_RTT[addr]
+                        timeout[addr] = timeout[addr] * 2
+                        Estimated_RTT[addr] = Estimated_RTT[addr] * 2
+                        Dev_RTT[addr] = Dev_RTT[addr] * 2
+                        print(f'timeout is updated to {timeout[addr]}')
 
                         if state[addr] == 1:
                             state[addr] = 0
@@ -507,17 +584,7 @@ def peer_run(config):
                                                   socket.htonl(seq),
                                                   socket.htonl(0))
                         sock.sendto(data_header + next_data, addr)
-                        # send_time_dict[addr][seq] = time.time()
-
-            if len(read_ready) > 0:
-                if sock in read_ready:
-                    process_inbound_udp(sock)
-                if sys.stdin in read_ready:
-                    process_user_input(sock)
-
-            else:
-                # No pkt nor input arrives during this period
-                pass
+                        send_time_dict[addr][seq] = time.time()
     except KeyboardInterrupt:
         pass
     finally:
